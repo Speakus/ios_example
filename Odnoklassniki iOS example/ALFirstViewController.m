@@ -54,8 +54,18 @@
 * Запрос к API без параметров.
 */
 - (void)getFriends{
+    // API has issue and we got error for vaious params
+    // dictParams           error
+    // ------------------------------
+    // @{}                  PARAM : Missing required parameter uids
+    // @{@"uid": userId}    PARAM : Only one of session_key or uid must be specified
+    // nil                  PARAM : Missing required parameter uids
+    //
+    // so session_key param is required for workaround of this issue
+    NSDictionary * dictParams = @{@"session_key": [OKSession activeSession].accessToken};
+    NSMutableDictionary * params = [NSMutableDictionary dictionaryWithDictionary: dictParams];
     OKRequest *newRequest = [Odnoklassniki requestWithMethodName:@"friends.get"
-													   andParams:nil
+                                                       andParams:params
 												   andHttpMethod:@"GET"
 													 andDelegate:self];
     [newRequest load];
@@ -68,8 +78,10 @@
 - (void)getUserInfo{
     @autoreleasepool {
         [self.authButton setTitle:NSLocalizedString(@"Logout", nil) forState:UIControlStateNormal];
+        NSDictionary * dictParams = @{@"fields": @"first_name,last_name,location,pic_1"};
+        NSMutableDictionary * params = [NSMutableDictionary dictionaryWithDictionary: dictParams];
         OKRequest *newRequest = [Odnoklassniki requestWithMethodName:@"users.getCurrentUser"
-                                                           andParams:[NSMutableDictionary dictionaryWithDictionary:@{@"fields": @"first_name,last_name,location,pic_1"}]
+                                                           andParams:params
                                                        andHttpMethod:@"GET"
                                                          andDelegate:self];
         [newRequest load];
@@ -141,8 +153,8 @@
 */
 -(void)request:(OKRequest *)request didLoad:(id)result {
     @autoreleasepool {
-        NSDictionary *resDict;
-        NSArray *resArr;
+        NSDictionary *resDict = nil;
+        NSArray *resArr = nil;
         // result is either array or dictionary
         // result - это либо массив, либо словарь
         @try {
@@ -176,27 +188,34 @@
             });
         }
         if ([request.url rangeOfString:@"/friends/get"].location != NSNotFound && resArr) {
-            int maxStepNumber = [friends count] / 100;
+            int maxStepNumber = [resArr count] / 100;
             for (int currentStep = 0; currentStep <= maxStepNumber; currentStep++) {
                 NSRange range;
                 range.location = currentStep*100;
                 range.length = (currentStep == maxStepNumber) ? ([resArr count] % 100) : 100;
+                
+                NSString * uids = [[resArr subarrayWithRange:range] componentsJoinedByString:@","];
+                NSDictionary * dictParams = @{@"uids": uids,
+                                              @"fields": @"first_name,last_name,uid,online,pic_1"};
+                NSMutableDictionary * params = [NSMutableDictionary dictionaryWithDictionary: dictParams];
                 OKRequest *request = [Odnoklassniki requestWithMethodName:@"users.getInfo"
-                                                                andParams:[NSMutableDictionary dictionaryWithDictionary:@{@"uids":[[resArr subarrayWithRange:range]componentsJoinedByString:@","],@"fields": @"first_name,last_name,uid,online,pic_1"}]
+                                                                andParams:params
                                                             andHttpMethod:@"GET"
                                                               andDelegate:self];
                 [request load];
             }
         }
         if ([request.url rangeOfString:@"/users/getInfo"].location != NSNotFound) {
-            friends = [[NSMutableArray alloc]init];
+            if (nil == friends) {
+                friends = [[NSMutableArray alloc]init];
+            }
 
-            for (NSString *uid in resArr) {
-                ALFriend *friend = [[ALFriend alloc]initWithUid:[((NSDictionary*)uid) objectForKey:@"uid"]];
-                friend.name = [((NSDictionary*)uid) objectForKey:@"first_name"];
-                friend.surname = [((NSDictionary*)uid) objectForKey:@"last_name"];
-                friend.pic_1Url = [((NSDictionary*)uid) objectForKey:@"pic_1"];
-                if ([((NSDictionary*)uid) objectForKey:@"online"]) {
+            for (NSDictionary *resFriend in resArr) {
+                ALFriend *friend = [[ALFriend alloc]initWithUid:[resFriend objectForKey:@"uid"]];
+                friend.name = [resFriend objectForKey:@"first_name"];
+                friend.surname = [resFriend objectForKey:@"last_name"];
+                friend.pic_1Url = [resFriend objectForKey:@"pic_1"];
+                if ([resFriend objectForKey:@"online"]) {
                     friend.isOnline = true;
                 }
                 [friends addObject:friend];
@@ -212,7 +231,7 @@
  * Метод будет вызван после того, как на данный OKRequest получен некорректный ответ или ответ не был получен
 */
 -(void)request:(OKRequest *)request didFailWithError:(NSError *)error {
-	NSLog(@"Request failed with error = %@", error);
+	NSLog(@"Request %@ failed with error = %@", request.url, error);
 }
 
 #pragma mark - table view
